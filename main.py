@@ -2,7 +2,7 @@
 import os
 import json
 import hashlib
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -129,7 +129,7 @@ def _call_openai(prompt: str) -> str:
     )
     return resp.choices[0].message.content.strip()
 
-def _qa_cache_key(species: str, q: str, summary: str | None) -> str:
+def _qa_cache_key(species: str, q: str, summary: Optional[str]) -> str:
     payload = json.dumps({
         "species": species.strip(),
         "q": q.strip(),
@@ -300,7 +300,7 @@ def ask(prompt: str = Query(..., min_length=1, description="Bird description or 
 def qa(
     species: str = Query(..., min_length=1, description="Bird species, e.g. 'Barn Owl'"),
     q: str = Query(..., min_length=1, description="User's question, e.g. 'what does it eat?'"),
-    summary: str | None = Query(None, description="Optional short summary/context")
+    summary: Optional[str] = Query(None, description="Optional short summary/context")
 ):
     """
     Direct QA about a bird species. Returns only a concise answer (≤3 lines/≤200 chars).
