@@ -47,7 +47,7 @@ def save_cache():
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
-def ask_with_cache(prompt: str) -> tuple[str, bool]:
+def ask_with_cache(prompt: str) -> Tuple[str, bool]:
     key = hashlib.sha256(prompt.encode()).hexdigest()
     if key in cache:
         return cache[key], True
