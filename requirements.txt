@@ -3,3 +3,6 @@ uvicorn
 openai
 typing
 pydantic
+hashlib
+os
+json
