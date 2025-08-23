@@ -20,6 +20,8 @@ CACHE_FILE = "openai_cache.json"
 # Fixed textbox limits (edit these if needed)
 DEFAULT_MAX_LINES = 3
 DEFAULT_MAX_CHARS = 200
+QA_MAX_LINES = DEFAULT_MAX_LINES
+QA_MAX_CHARS = DEFAULT_MAX_CHARS
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -44,6 +46,11 @@ class AskResponse(BaseModel):
     answer: str
     cached: bool
 
+class QAResponse(BaseModel):
+    species: str
+    question: str
+    answer: str
+    cached: bool
 
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", response_class=PlainTextResponse, status_code=200)
@@ -88,6 +95,14 @@ Constraints:
 - Be specific but brief; each checklist bullet ≤ 15 words.
 - Output must be valid JSON (no trailing commas, code fences, or commentary).
 """
+QA_SYSTEM_PROMPT = """
+You are an expert ornithologist. Answer the user's specific question about the given species.
+Constraints:
+- Output plain text only (no JSON, no markdown, no bullets).
+- 1–3 short lines total, ≤200 characters overall (including newlines).
+- Answer only the question asked; do not add unrelated facts.
+- If the question cannot be answered for this species, give one short helpful line to clarify.
+"""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -112,6 +127,63 @@ def _call_openai(prompt: str) -> str:
         max_tokens=600
     )
     return resp.choices[0].message.content.strip()
+
+def _qa_cache_key(species: str, q: str, summary: str | None) -> str:
+    payload = json.dumps({
+        "species": species.strip(),
+        "q": q.strip(),
+        "summary": (summary or "").strip(),
+        "model": MODEL_NAME,
+        "lines": QA_MAX_LINES,
+        "len": QA_MAX_CHARS
+    }, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+def _call_openai_text(system_prompt: str, user_content: str, max_tokens: int = 400) -> str:
+    resp = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+def _clip_whole_lines(text: str, max_lines: int, max_chars: int) -> str:
+    """
+    Keep whole lines only; skip any line that would exceed the remaining char budget.
+    No ellipses. No mid-sentence truncation.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    out: list[str] = []
+    remaining = max_chars
+    for ln in lines:
+        if len(out) >= max_lines:
+            break
+        need = len(ln) + (1 if out else 0)  # +1 for newline if not first
+        if need <= remaining:
+            out.append(ln)
+            remaining -= need
+        else:
+            # Skip the entire line if it won't fit
+            continue
+    # If the model returned one very long line that doesn't fit, try a shorter direct sentence:
+    if not out and lines:
+        # Try to take the first sentence if it fits
+        first = lines[0]
+        # Split on simple sentence delimiters
+        for sep in [". ", "! ", "? "]:
+            if sep in first:
+                first_sentence = first.split(sep)[0] + sep.strip()
+                if len(first_sentence) <= max_chars:
+                    return first_sentence
+                break
+        # Otherwise return empty (model should already aim for brevity)
+        return ""
+    return "\n".join(out)
+
 
 def _normalize_payload(parsed: dict) -> dict:
     """Ensure no empty or placeholder fields; backfill generic guidance when needed."""
@@ -222,3 +294,33 @@ def ask(prompt: str = Query(..., min_length=1, description="Bird description or 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/qa", response_model=QAResponse)
+def qa(
+    species: str = Query(..., min_length=1, description="Bird species, e.g. 'Barn Owl'"),
+    q: str = Query(..., min_length=1, description="User's question, e.g. 'what does it eat?'"),
+    summary: str | None = Query(None, description="Optional short summary/context")
+):
+    """
+    Direct QA about a bird species. Returns only a concise answer (≤3 lines/≤200 chars).
+    """
+    try:
+        key = _qa_cache_key(species, q, summary)
+        if key in cache:
+            return QAResponse(species=species, question=q, answer=cache[key], cached=True)
+
+        user_msg = (
+            f"Species: {species.strip()}."
+            + (f"\nKnown summary: {summary.strip()}" if summary else "")
+            + f"\nQuestion: {q.strip()}"
+        )
+
+        raw_answer = _call_openai_text(QA_SYSTEM_PROMPT, user_msg, max_tokens=300)
+        answer = _clip_whole_lines(raw_answer, QA_MAX_LINES, QA_MAX_CHARS)
+
+        cache[key] = answer
+        return QAResponse(species=species, question=q, answer=answer, cached=False)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
