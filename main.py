@@ -1,29 +1,51 @@
+# main.py
 import os
 import json
-from openai import OpenAI
 import hashlib
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
+from openai import OpenAI
 
-# Initialize OpenAI client
-client = OpenAI(api_key="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")
+# Environment variables
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("Missing OPENAI_API_KEY environment variable")
 
 CACHE_FILE = "openai_cache.json"
 
-# Load or initialize cache
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, "r") as f:
-        cache = json.load(f)
-else:
-    cache = {}
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-def ask_with_cache(prompt: str) -> str:
-    # Create a unique key for the prompt
+# FastAPI app
+app = FastAPI(title="BirdsChat API", version="1.0")
+
+# In-memory cache, loaded on startup
+cache: dict[str, str] = {}
+
+class AskResponse(BaseModel):
+    prompt: str
+    answer: str
+    cached: bool
+
+@app.on_event("startup")
+def load_cache():
+    global cache
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            cache = json.load(f)
+    else:
+        cache = {}
+
+@app.on_event("shutdown")
+def save_cache():
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
+
+def ask_with_cache(prompt: str) -> tuple[str, bool]:
     key = hashlib.sha256(prompt.encode()).hexdigest()
-
     if key in cache:
-        print("✅ Using cached response")
-        return cache[key]
+        return cache[key], True
 
-    print("⚡ Calling OpenAI API...")
     response = client.chat.completions.create(
         model="gpt-4.1-nano",
         messages=[
@@ -32,16 +54,17 @@ def ask_with_cache(prompt: str) -> str:
         ],
         max_tokens=70
     )
-
     answer = response.choices[0].message.content.strip()
     cache[key] = answer
+    return answer, False
 
-    with open(CACHE_FILE, "w") as f:
-        json.dump(cache, f, indent=2)
-
-    return answer
-
-if __name__ == "__main__":
-    bird = "Kingfisher"
-    prompt = f"Give me a short, friendly description of the bird species {bird}."
-    print(ask_with_cache(prompt))
+@app.get("/ask", response_model=AskResponse)
+def ask(prompt: str = Query(..., min_length=1, description="Bird description question")):
+    """
+    Ask about a bird. Returns a short, friendly description.
+    """
+    try:
+        answer, cached = ask_with_cache(prompt)
+        return AskResponse(prompt=prompt, answer=answer, cached=cached)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
