@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from openai import OpenAI
+from typing import Dict
 
 # Environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -21,7 +22,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 app = FastAPI(title="BirdsChat API", version="1.0")
 
 # In-memory cache, loaded on startup
-cache: dict[str, str] = {}
+cache: Dict[str, str] = {}
 
 class AskResponse(BaseModel):
     prompt: str
