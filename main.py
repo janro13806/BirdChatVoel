@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from openai import OpenAI
-from typing import Dict
+from typing import Dict, Tuple
 
 # Environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
