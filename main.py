@@ -155,27 +155,40 @@ def _normalize_payload(parsed: dict) -> dict:
 def _render_textbox(p: AskPayload) -> str:
     """
     Render into a short textbox string:
-    - max DEFAULT_MAX_LINES lines
-    - max DEFAULT_MAX_CHARS chars total
-    - no markdown
+    - ≤ DEFAULT_MAX_LINES lines
+    - ≤ DEFAULT_MAX_CHARS chars total (including newlines)
+    - Never truncate a fact; if a fact doesn't fit, skip it entirely.
     """
     similar = "; ".join(f"{s.name}: {s.how_to_tell_apart}" for s in p.similar_species[:1])
     checklist = "; ".join(p.quick_checklist[:2])
 
-    candidates = [
+    # Order = importance priority
+    facts = [
         f"Habitat: {p.habitat_range}",
         f"Voice: {p.voice}",
         f"Similar: {similar}" if similar else None,
         f"Checklist: {checklist}" if checklist else None,
         f"Next: {p.next_step}",
     ]
-    lines = [x for x in candidates if x][:DEFAULT_MAX_LINES]
-    text = "\n".join(lines)
+    facts = [f for f in facts if f]
 
-    if len(text) > DEFAULT_MAX_CHARS:
-        text = text[: max(0, DEFAULT_MAX_CHARS - 1)].rstrip() + "…"
+    out: list[str] = []
+    remaining = DEFAULT_MAX_CHARS
 
-    return text
+    for fact in facts:
+        if len(out) >= DEFAULT_MAX_LINES:
+            break
+        # account for newline if this is not the first line
+        need = len(fact) + (1 if out else 0)
+        if need <= remaining:
+            out.append(fact)
+            remaining -= need
+        else:
+            # Skip the entire fact if it can't fit; do not truncate or add ellipsis
+            continue
+
+    return "\n".join(out)
+
 
 def ask_with_cache(prompt: str) -> Tuple[str, bool]:
     key = _cache_key(prompt)
