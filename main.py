@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -26,6 +27,10 @@ class AskResponse(BaseModel):
     prompt: str
     answer: str
     cached: bool
+
+@app.get("/", response_class=PlainTextResponse, status_code=200)
+async def root_health_check():
+    return "OK"
 
 @app.on_event("startup")
 def load_cache():
